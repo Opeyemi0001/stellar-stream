@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env};
+use soroban_sdk::{contract, contractimpl, contractevent, contracttype, Address, Env};
 
 #[contracttype]
 #[derive(Clone)]
@@ -19,6 +19,40 @@ pub struct Stream {
 enum DataKey {
     NextStreamId,
     Stream(u64),
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct StreamCreated {
+    #[topic]
+    pub stream_id: u64,
+    #[topic]
+    pub sender: Address,
+    #[topic]
+    pub recipient: Address,
+    pub token: Address,
+    pub total_amount: i128,
+    pub start_time: u64,
+    pub end_time: u64,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct StreamClaimed {
+    #[topic]
+    pub stream_id: u64,
+    #[topic]
+    pub recipient: Address,
+    pub amount: i128,
+}
+
+#[contractevent]
+#[derive(Clone, Debug)]
+pub struct StreamCanceled {
+    #[topic]
+    pub stream_id: u64,
+    #[topic]
+    pub sender: Address,
 }
 
 #[contract]
@@ -69,6 +103,17 @@ impl StellarStreamContract {
             .persistent()
             .set(&DataKey::Stream(next_id), &stream);
 
+        StreamCreated {
+            stream_id: next_id,
+            sender: stream.sender.clone(),
+            recipient: stream.recipient.clone(),
+            token: stream.token.clone(),
+            total_amount: stream.total_amount,
+            start_time: stream.start_time,
+            end_time: stream.end_time,
+        }
+        .publish(&env);
+
         next_id
     }
 
@@ -109,6 +154,13 @@ impl StellarStreamContract {
             .persistent()
             .set(&DataKey::Stream(stream_id), &stream);
 
+        StreamClaimed {
+            stream_id,
+            recipient: recipient.clone(),
+            amount,
+        }
+        .publish(&env);
+
         amount
     }
 
@@ -137,6 +189,12 @@ impl StellarStreamContract {
         env.storage()
             .persistent()
             .set(&DataKey::Stream(stream_id), &stream);
+
+        StreamCanceled {
+            stream_id,
+            sender: sender.clone(),
+        }
+        .publish(&env);
     }
 }
 
@@ -167,3 +225,6 @@ fn vested_amount(stream: &Stream, at_time: u64) -> i128 {
 
     stream.total_amount * (elapsed as i128) / (total_duration as i128)
 }
+
+#[cfg(test)]
+mod test;
