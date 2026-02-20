@@ -1,12 +1,15 @@
 import cors from "cors";
 import express, { Request, Response } from "express";
 import { openIssues } from "./services/openIssues";
+import "dotenv/config";
 import {
   calculateProgress,
   cancelStream,
   createStream,
   getStream,
   listStreams,
+  initSoroban,
+  syncStreams,
   StreamInput,
 } from "./services/streamStore";
 
@@ -106,41 +109,58 @@ app.get("/api/streams/:id", (req: Request, res: Response) => {
   });
 });
 
-app.post("/api/streams", (req: Request, res: Response) => {
+app.post("/api/streams", async (req: Request, res: Response) => {
   const parsed = parseInput(req.body);
   if (!parsed.ok) {
     res.status(400).json({ error: parsed.message });
     return;
   }
 
-  const stream = createStream(parsed.value);
-  res.status(201).json({
-    data: {
-      ...stream,
-      progress: calculateProgress(stream),
-    },
-  });
+  try {
+    const stream = await createStream(parsed.value);
+    res.status(201).json({
+      data: {
+        ...stream,
+        progress: calculateProgress(stream),
+      },
+    });
+  } catch (err: any) {
+    console.error("Failed to create stream:", err);
+    res.status(500).json({ error: err.message || "Failed to create stream." });
+  }
 });
 
-app.post("/api/streams/:id/cancel", (req: Request, res: Response) => {
-  const stream = cancelStream(req.params.id);
-  if (!stream) {
-    res.status(404).json({ error: "Stream not found." });
-    return;
-  }
+app.post("/api/streams/:id/cancel", async (req: Request, res: Response) => {
+  try {
+    const stream = await cancelStream(req.params.id);
+    if (!stream) {
+      res.status(404).json({ error: "Stream not found." });
+      return;
+    }
 
-  res.json({
-    data: {
-      ...stream,
-      progress: calculateProgress(stream),
-    },
-  });
+    res.json({
+      data: {
+        ...stream,
+        progress: calculateProgress(stream),
+      },
+    });
+  } catch (err: any) {
+    console.error("Failed to cancel stream:", err);
+    res.status(500).json({ error: err.message || "Failed to cancel stream." });
+  }
 });
 
 app.get("/api/open-issues", (_req: Request, res: Response) => {
   res.json({ data: openIssues });
 });
 
-app.listen(port, () => {
-  console.log(`StellarStream API listening on http://localhost:${port}`);
-});
+async function startServer() {
+  await initSoroban();
+  await syncStreams();
+
+  app.listen(port, () => {
+    console.log(`StellarStream API listening on http://localhost:${port}`);
+  });
+}
+
+startServer().catch(console.error);
