@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect,useState } from "react";
 import { CreateStreamPayload } from "../types/stream";
 
 interface CreateStreamFormProps {
@@ -13,6 +13,20 @@ export function CreateStreamForm({ onCreate }: CreateStreamFormProps) {
   const [durationHours, setDurationHours] = useState("24");
   const [startInMinutes, setStartInMinutes] = useState("0");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [allowedAssets, setAllowedAssets] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetch("/api/allowed-assets")
+      .then((res) => res.json())
+      .then((json) => {
+        const assets: string[] = json.data ?? [];
+        setAllowedAssets(assets);
+        if (assets.length > 0) setAssetCode(assets[0]);
+      })
+      .catch(() => {
+        // fall back.
+      });
+  }, []);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -36,7 +50,7 @@ export function CreateStreamForm({ onCreate }: CreateStreamFormProps) {
     }
   }
 
-  return (
+ return (
     <form className="card form-grid" onSubmit={handleSubmit}>
       <h2>Create Stream</h2>
 
@@ -53,8 +67,31 @@ export function CreateStreamForm({ onCreate }: CreateStreamFormProps) {
       <div className="row">
         <label>
           Asset
-          <input value={assetCode} onChange={(e) => setAssetCode(e.target.value)} required />
+          {allowedAssets.length > 0 ? (
+            <>
+              <select
+                value={assetCode}
+                onChange={(e) => setAssetCode(e.target.value)}
+                required
+              >
+                {allowedAssets.map((a) => (
+                  <option key={a} value={a}>
+                    {a}
+                  </option>
+                ))}
+              </select>
+              <span className="field-hint">Allowed: {allowedAssets.join(", ")}</span>
+            </>
+          ) : (
+            <input
+              value={assetCode}
+              onChange={(e) => setAssetCode(e.target.value)}
+              placeholder="e.g. USDC"
+              required
+            />
+          )}
         </label>
+
         <label>
           Total Amount
           <input

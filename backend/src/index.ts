@@ -12,6 +12,7 @@ import {
 
 const app = express();
 const port = Number(process.env.PORT ?? 3001);
+const ALLOWED_ASSETS = ["USD", "EUR", "BRL", "CNY"];
 
 app.use(cors());
 app.use(express.json());
@@ -41,6 +42,7 @@ function parseInput(body: unknown): { ok: true; value: StreamInput } | { ok: fal
   const totalAmount = toNumber(payload.totalAmount);
   const durationSeconds = toNumber(payload.durationSeconds);
   const startAtValue = payload.startAt === undefined ? null : toNumber(payload.startAt);
+  const assetCodeUpper = assetCodeRaw.toUpperCase();
 
   if (sender.length < 5 || recipient.length < 5) {
     return { ok: false, message: "Sender and recipient must look like valid Stellar account IDs." };
@@ -48,6 +50,14 @@ function parseInput(body: unknown): { ok: true; value: StreamInput } | { ok: fal
 
   if (assetCodeRaw.length < 2 || assetCodeRaw.length > 12) {
     return { ok: false, message: "assetCode must be between 2 and 12 characters." };
+  }
+
+  // whitelist check
+  if (!ALLOWED_ASSETS.includes(assetCodeUpper)) {
+    return {
+      ok: false,
+      message: `Asset "${assetCodeRaw}" is not supported. Allowed assets: ${ALLOWED_ASSETS.join(', ')}.`,
+    };
   }
 
   if (totalAmount === null || totalAmount <= 0) {
@@ -139,6 +149,10 @@ app.post("/api/streams/:id/cancel", (req: Request, res: Response) => {
 
 app.get("/api/open-issues", (_req: Request, res: Response) => {
   res.json({ data: openIssues });
+});
+
+app.get("/api/allowed-assets", (_req: Request, res: Response) => {
+  res.json({ data: ALLOWED_ASSETS });
 });
 
 app.listen(port, () => {
