@@ -1,4 +1,5 @@
 import cors from "cors";
+import "dotenv/config";
 import express, { Request, Response } from "express";
 import swaggerUi from "swagger-ui-express";
 import { swaggerDocument } from "./swagger";
@@ -19,6 +20,9 @@ import {
 
 const app = express();
 const port = Number(process.env.PORT ?? 3001);
+const ALLOWED_ASSETS = (process.env.ALLOWED_ASSETS || 'USDC,XLM')
+  .split(',')
+  .map(a => a.trim().toUpperCase());
 
 app.use(cors());
 app.use(express.json());
@@ -50,6 +54,7 @@ function parseInput(body: unknown): { ok: true; value: StreamInput } | { ok: fal
   const totalAmount = toNumber(payload.totalAmount);
   const durationSeconds = toNumber(payload.durationSeconds);
   const startAtValue = payload.startAt === undefined ? null : toNumber(payload.startAt);
+  const assetCodeUpper = assetCodeRaw.toUpperCase();
 
   if (sender.length < 5 || recipient.length < 5) {
     return { ok: false, message: "Sender and recipient must look like valid Stellar account IDs." };
@@ -57,6 +62,14 @@ function parseInput(body: unknown): { ok: true; value: StreamInput } | { ok: fal
 
   if (assetCodeRaw.length < 2 || assetCodeRaw.length > 12) {
     return { ok: false, message: "assetCode must be between 2 and 12 characters." };
+  }
+
+  // whitelist check
+  if (!ALLOWED_ASSETS.includes(assetCodeUpper)) {
+    return {
+      ok: false,
+      message: `Asset "${assetCodeRaw}" is not supported. Allowed assets: ${ALLOWED_ASSETS.join(', ')}.`,
+    };
   }
 
   if (totalAmount === null || totalAmount <= 0) {
@@ -93,43 +106,23 @@ app.get("/api/health", (_req: Request, res: Response) => {
 });
 
 app.get("/api/streams", (_req: Request, res: Response) => {
-  const data = listStreams().map((stream) => ({
-    ...stream,
-    progress: calculateProgress(stream),
-  }));
+  const data = listStreams().map((stream) => ({ ...stream, progress: calculateProgress(stream) }));
   res.json({ data });
 });
 
 app.get("/api/streams/:id", (req: Request, res: Response) => {
   const stream = getStream(req.params.id);
-  if (!stream) {
-    res.status(404).json({ error: "Stream not found." });
-    return;
-  }
-
-  res.json({
-    data: {
-      ...stream,
-      progress: calculateProgress(stream),
-    },
-  });
+  if (!stream) { res.status(404).json({ error: "Stream not found." }); return; }
+  res.json({ data: { ...stream, progress: calculateProgress(stream) } });
 });
 
 app.post("/api/streams", async (req: Request, res: Response) => {
   const parsed = parseInput(req.body);
-  if (!parsed.ok) {
-    res.status(400).json({ error: parsed.message });
-    return;
-  }
+  if (!parsed.ok) { res.status(400).json({ error: parsed.message }); return; }
 
   try {
     const stream = await createStream(parsed.value);
-    res.status(201).json({
-      data: {
-        ...stream,
-        progress: calculateProgress(stream),
-      },
-    });
+    res.status(201).json({ data: { ...stream, progress: calculateProgress(stream) } });
   } catch (err: any) {
     console.error("Failed to create stream:", err);
     res.status(500).json({ error: err.message || "Failed to create stream." });
@@ -139,17 +132,8 @@ app.post("/api/streams", async (req: Request, res: Response) => {
 app.post("/api/streams/:id/cancel", async (req: Request, res: Response) => {
   try {
     const stream = await cancelStream(req.params.id);
-    if (!stream) {
-      res.status(404).json({ error: "Stream not found." });
-      return;
-    }
-
-    res.json({
-      data: {
-        ...stream,
-        progress: calculateProgress(stream),
-      },
-    });
+    if (!stream) { res.status(404).json({ error: "Stream not found." }); return; }
+    res.json({ data: { ...stream, progress: calculateProgress(stream) } });
   } catch (err: any) {
     console.error("Failed to cancel stream:", err);
     res.status(500).json({ error: err.message || "Failed to cancel stream." });
@@ -193,18 +177,14 @@ app.get("/api/open-issues", async (_req: Request, res: Response) => {
   }
 });
 
-const STATUS_REFRESH_INTERVAL_MS = 60 * 1000;
+
 
 async function startServer() {
   await initSoroban();
   await syncStreams();
-
   app.listen(port, () => {
     console.log(`StellarStream API listening on http://localhost:${port}`);
-    setInterval(() => {
-      const n = refreshStreamStatuses();
-      console.log(`Status refresh job run, ${n} stream(s) updated.`);
-    }, STATUS_REFRESH_INTERVAL_MS);
+
   });
 }
 

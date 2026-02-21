@@ -243,35 +243,3 @@ export async function cancelStream(id: string): Promise<StreamRecord | undefined
   stream.canceledAt = nowInSeconds();
   streams.set(id, stream);
   return stream;
-}
-
-/**
- * Update the startAt timestamp of a stream.
- * Only streams in the "scheduled" status (i.e. not yet started, not canceled,
- * not completed) may be edited.  Returns the updated record or throws on
- * validation failure.
- */
-export function updateStreamStartAt(
-  id: string,
-  newStartAt: number,
-): StreamRecord {
-  const stream = streams.get(id);
-  if (!stream) {
-    throw Object.assign(new Error("Stream not found."), { statusCode: 404 });
-  }
-
-  const status = computeStatus(stream, nowInSeconds());
-
-  if (status !== "scheduled") {
-    throw Object.assign(
-      new Error(
-        `Cannot update start time: stream is ${status}. Only scheduled streams can be edited.`,
-      ),
-      { statusCode: 422 },
-    );
-  }
-
-  stream.startAt = newStartAt;
-  streams.set(id, stream);
-  return stream;
-}
