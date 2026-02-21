@@ -1,6 +1,8 @@
 import cors from "cors";
 import express, { Request, Response } from "express";
-import { openIssues } from "./services/openIssues";
+import swaggerUi from "swagger-ui-express";
+import { swaggerDocument } from "./swagger";
+import { fetchOpenIssues } from "./services/openIssues";
 import "dotenv/config";
 import {
   calculateProgress,
@@ -19,6 +21,8 @@ const port = Number(process.env.PORT ?? 3001);
 
 app.use(cors());
 app.use(express.json());
+
+app.use("/api/docs", swaggerUi.serve, swaggerUi.setup(swaggerDocument));
 
 function toNumber(value: unknown): number | null {
   if (typeof value === "number" && Number.isFinite(value)) {
@@ -151,8 +155,14 @@ app.post("/api/streams/:id/cancel", async (req: Request, res: Response) => {
   }
 });
 
-app.get("/api/open-issues", (_req: Request, res: Response) => {
-  res.json({ data: openIssues });
+app.get("/api/open-issues", async (_req: Request, res: Response) => {
+  try {
+    const data = await fetchOpenIssues();
+    res.json({ data });
+  } catch (err: any) {
+    console.error("Failed to fetch open issues from proxy:", err);
+    res.status(500).json({ error: err.message || "Failed to fetch open issues." });
+  }
 });
 
 const STATUS_REFRESH_INTERVAL_MS = 60 * 1000;
