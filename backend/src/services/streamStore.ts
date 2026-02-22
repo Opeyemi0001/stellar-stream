@@ -243,3 +243,23 @@ export async function cancelStream(id: string): Promise<StreamRecord | undefined
   stream.canceledAt = nowInSeconds();
   streams.set(id, stream);
   return stream;
+}
+
+export function updateStreamStartAt(id: string, newStartAt: number): StreamRecord {
+  const stream = streams.get(id);
+  if (!stream) {
+    const err = new Error("Stream not found.");
+    (err as any).statusCode = 404;
+    throw err;
+  }
+
+  if (computeStatus(stream, nowInSeconds()) !== "scheduled") {
+    const err = new Error("Only scheduled streams can be updated.");
+    (err as any).statusCode = 422;
+    throw err;
+  }
+
+  stream.startAt = newStartAt;
+  streams.set(stream.id, stream);
+  return stream;
+}

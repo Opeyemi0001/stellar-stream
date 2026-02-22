@@ -4,7 +4,6 @@ import express, { Request, Response } from "express";
 import swaggerUi from "swagger-ui-express";
 import { swaggerDocument } from "./swagger";
 import { fetchOpenIssues } from "./services/openIssues";
-import "dotenv/config";
 import {
   calculateProgress,
   cancelStream,
@@ -12,13 +11,18 @@ import {
   getStream,
   listStreams,
   initSoroban,
-  refreshStreamStatuses,
   syncStreams,
   updateStreamStartAt,
   StreamInput,
+  StreamStatus,
 } from "./services/streamStore";
 
-const app = express();
+const STREAM_STATUSES: StreamStatus[] = ["scheduled", "active", "completed", "canceled"];
+const PAGINATION_DEFAULT_PAGE = 1;
+const PAGINATION_DEFAULT_LIMIT = 20;
+const PAGINATION_MAX_LIMIT = 100;
+
+export const app = express();
 const port = Number(process.env.PORT ?? 3001);
 const ALLOWED_ASSETS = (process.env.ALLOWED_ASSETS || 'USDC,XLM')
   .split(',')
@@ -40,6 +44,77 @@ function toNumber(value: unknown): number | null {
   }
 
   return null;
+}
+
+function parseOptionalQueryString(
+  value: unknown,
+  fieldName: string,
+): { ok: true; value?: string } | { ok: false; message: string } {
+  if (value === undefined) {
+    return { ok: true };
+  }
+
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  if (typeof rawValue !== "string") {
+    return { ok: false, message: `${fieldName} must be a string.` };
+  }
+
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return { ok: false, message: `${fieldName} must be a non-empty string.` };
+  }
+
+  return { ok: true, value: trimmed };
+}
+
+function parseOptionalPositiveIntQuery(
+  value: unknown,
+  fieldName: string,
+  min: number,
+  max?: number,
+): { ok: true; value?: number } | { ok: false; message: string } {
+  if (value === undefined) {
+    return { ok: true };
+  }
+
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  const parsed = toNumber(rawValue);
+  if (parsed === null || !Number.isInteger(parsed)) {
+    return { ok: false, message: `${fieldName} must be an integer.` };
+  }
+
+  if (parsed < min) {
+    return { ok: false, message: `${fieldName} must be greater than or equal to ${min}.` };
+  }
+
+  if (max !== undefined && parsed > max) {
+    return { ok: false, message: `${fieldName} must be less than or equal to ${max}.` };
+  }
+
+  return { ok: true, value: parsed };
+}
+
+function parseOptionalStatusQuery(
+  value: unknown,
+): { ok: true; value?: StreamStatus } | { ok: false; message: string } {
+  const parsed = parseOptionalQueryString(value, "status");
+  if (!parsed.ok) {
+    return parsed;
+  }
+
+  if (parsed.value === undefined) {
+    return { ok: true };
+  }
+
+  const normalized = parsed.value.toLowerCase();
+  if (!STREAM_STATUSES.includes(normalized as StreamStatus)) {
+    return {
+      ok: false,
+      message: `status must be one of: ${STREAM_STATUSES.join(", ")}.`,
+    };
+  }
+
+  return { ok: true, value: normalized as StreamStatus };
 }
 
 function parseInput(body: unknown): { ok: true; value: StreamInput } | { ok: false; message: string } {
@@ -105,9 +180,65 @@ app.get("/api/health", (_req: Request, res: Response) => {
   });
 });
 
-app.get("/api/streams", (_req: Request, res: Response) => {
-  const data = listStreams().map((stream) => ({ ...stream, progress: calculateProgress(stream) }));
-  res.json({ data });
+app.get("/api/streams", (req: Request, res: Response) => {
+  const senderQuery = parseOptionalQueryString(req.query.sender, "sender");
+  if (!senderQuery.ok) {
+    res.status(400).json({ error: senderQuery.message });
+    return;
+  }
+
+  const recipientQuery = parseOptionalQueryString(req.query.recipient, "recipient");
+  if (!recipientQuery.ok) {
+    res.status(400).json({ error: recipientQuery.message });
+    return;
+  }
+
+  const statusQuery = parseOptionalStatusQuery(req.query.status);
+  if (!statusQuery.ok) {
+    res.status(400).json({ error: statusQuery.message });
+    return;
+  }
+
+  const pageQuery = parseOptionalPositiveIntQuery(req.query.page, "page", 1);
+  if (!pageQuery.ok) {
+    res.status(400).json({ error: pageQuery.message });
+    return;
+  }
+
+  const limitQuery = parseOptionalPositiveIntQuery(req.query.limit, "limit", 1, PAGINATION_MAX_LIMIT);
+  if (!limitQuery.ok) {
+    res.status(400).json({ error: limitQuery.message });
+    return;
+  }
+
+  const paginationRequested = req.query.page !== undefined || req.query.limit !== undefined;
+
+  let streams = listStreams();
+  if (senderQuery.value !== undefined) {
+    streams = streams.filter((stream) => stream.sender === senderQuery.value);
+  }
+  if (recipientQuery.value !== undefined) {
+    streams = streams.filter((stream) => stream.recipient === recipientQuery.value);
+  }
+
+  let data = streams.map((stream) => ({ ...stream, progress: calculateProgress(stream) }));
+  if (statusQuery.value !== undefined) {
+    data = data.filter((stream) => stream.progress.status === statusQuery.value);
+  }
+
+  const total = data.length;
+
+  const page = paginationRequested ? (pageQuery.value ?? PAGINATION_DEFAULT_PAGE) : 1;
+  const limit = paginationRequested
+    ? (limitQuery.value ?? PAGINATION_DEFAULT_LIMIT)
+    : (total === 0 ? 0 : total);
+
+  if (paginationRequested) {
+    const start = (page - 1) * limit;
+    data = data.slice(start, start + limit);
+  }
+
+  res.json({ data, total, page, limit });
 });
 
 app.get("/api/streams/:id", (req: Request, res: Response) => {
@@ -179,7 +310,7 @@ app.get("/api/open-issues", async (_req: Request, res: Response) => {
 
 
 
-async function startServer() {
+export async function startServer() {
   await initSoroban();
   await syncStreams();
   app.listen(port, () => {
@@ -188,4 +319,6 @@ async function startServer() {
   });
 }
 
-startServer().catch(console.error);
+if (require.main === module) {
+  startServer().catch(console.error);
+}
