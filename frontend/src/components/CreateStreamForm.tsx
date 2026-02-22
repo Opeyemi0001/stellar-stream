@@ -1,4 +1,4 @@
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { CreateStreamPayload } from "../types/stream";
 import {
   FieldErrors,
@@ -11,6 +11,8 @@ import {
 interface CreateStreamFormProps {
   onCreate: (payload: CreateStreamPayload) => Promise<void>;
   apiError?: string | null;
+  /** Public key from a connected Freighter wallet, or null if not connected. */
+  walletAddress?: string | null;
 }
 
 // Derive a user-friendly hint from a raw API error message.
@@ -101,11 +103,17 @@ const INITIAL_VALUES: FormValues = {
   startInMinutes: "0",
 };
 
-export function CreateStreamForm({ onCreate, apiError }: CreateStreamFormProps) {
+export function CreateStreamForm({ onCreate, apiError, walletAddress }: CreateStreamFormProps) {
   const [values, setValues] = useState<FormValues>(INITIAL_VALUES);
   const [touched, setTouched] = useState<Partial<Record<keyof FormValues, boolean>>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitAttempted, setSubmitAttempted] = useState(false);
+
+  // Auto-fill sender from connected wallet; clear it when wallet disconnects.
+  useEffect(() => {
+    setValues((prev) => ({ ...prev, sender: walletAddress ?? "" }));
+    setTouched((prev) => ({ ...prev, sender: !!walletAddress }));
+  }, [walletAddress]);
 
   // Run validation on current values
   const errors: FieldErrors = validateForm(values);
@@ -130,6 +138,7 @@ export function CreateStreamForm({ onCreate, apiError }: CreateStreamFormProps) 
     event.preventDefault();
     setSubmitAttempted(true);
 
+    if (!walletAddress) return; // wallet must be connected
     if (!formValid) return;
 
     setIsSubmitting(true);
@@ -147,9 +156,9 @@ export function CreateStreamForm({ onCreate, apiError }: CreateStreamFormProps) 
         startAt,
       });
 
-      // Reset on success
-      setValues(INITIAL_VALUES);
-      setTouched({});
+      // Reset on success — preserve auto-filled sender if wallet is still connected.
+      setValues({ ...INITIAL_VALUES, sender: walletAddress ?? "" });
+      setTouched(walletAddress ? { sender: true } : {});
       setSubmitAttempted(false);
     } finally {
       setIsSubmitting(false);
@@ -178,18 +187,25 @@ export function CreateStreamForm({ onCreate, apiError }: CreateStreamFormProps) 
         <label htmlFor="stream-sender">
           Sender Account
           <span className="field-required" aria-hidden> *</span>
+          {walletAddress && (
+            <span className="field-hint field-hint--ok" style={{ fontWeight: "normal" }}>
+              {" "}— auto-filled from wallet
+            </span>
+          )}
         </label>
         <input
           id="stream-sender"
           type="text"
           value={values.sender}
-          onChange={set("sender")}
+          onChange={walletAddress ? undefined : set("sender")}
           onBlur={blur("sender")}
-          placeholder="G…  (56-character Stellar public key)"
+          placeholder="Connect wallet or paste a 56-character Stellar public key"
           aria-describedby={fieldError("sender") ? "sender-error" : "sender-hint"}
           aria-invalid={!!fieldError("sender")}
           autoComplete="off"
           spellCheck={false}
+          readOnly={!!walletAddress}
+          className={walletAddress ? "input-readonly" : undefined}
         />
         <AccountHint value={values.sender} />
         {fieldError("sender") && (
@@ -340,12 +356,20 @@ export function CreateStreamForm({ onCreate, apiError }: CreateStreamFormProps) 
         </div>
       </div>
 
+      {/* Wallet-not-connected guard */}
+      {!walletAddress && (
+        <p className="wallet-required-notice" role="alert">
+          Connect your Freighter wallet to create a stream.
+        </p>
+      )}
+
       {/* Submit */}
       <button
         className="btn-primary"
         type="submit"
-        disabled={isSubmitting || (submitAttempted && !formValid)}
+        disabled={isSubmitting || !walletAddress || (submitAttempted && !formValid)}
         aria-busy={isSubmitting}
+        title={!walletAddress ? "Connect your wallet first" : undefined}
       >
         {isSubmitting ? "Creating…" : "Create Stream"}
       </button>
