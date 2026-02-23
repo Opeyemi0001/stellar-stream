@@ -4,13 +4,7 @@ import express, { Request, Response } from "express";
 import swaggerUi from "swagger-ui-express";
 import { swaggerDocument } from "./swagger";
 import { fetchOpenIssues } from "./services/openIssues";
-import {
-  generateChallenge,
-  verifyChallengeAndIssueToken,
-  authMiddleware,
-  AuthUser,
-} from "./services/auth";
-import "dotenv/config";
+
 import {
   calculateProgress,
   cancelStream,
@@ -18,13 +12,18 @@ import {
   getStream,
   listStreams,
   initSoroban,
-  refreshStreamStatuses,
   syncStreams,
   updateStreamStartAt,
   StreamInput,
+  StreamStatus,
 } from "./services/streamStore";
 
-const app = express();
+const STREAM_STATUSES: StreamStatus[] = ["scheduled", "active", "completed", "canceled"];
+const PAGINATION_DEFAULT_PAGE = 1;
+const PAGINATION_DEFAULT_LIMIT = 20;
+const PAGINATION_MAX_LIMIT = 100;
+
+export const app = express();
 const port = Number(process.env.PORT ?? 3001);
 const ALLOWED_ASSETS = (process.env.ALLOWED_ASSETS || "USDC,XLM")
   .split(",")
@@ -48,9 +47,7 @@ function toNumber(value: unknown): number | null {
   return null;
 }
 
-function parseInput(
-  body: unknown,
-): { ok: true; value: StreamInput } | { ok: false; message: string } {
+
   if (!body || typeof body !== "object") {
     return { ok: false, message: "Body must be a JSON object." };
   }
@@ -130,32 +127,7 @@ app.get("/api/health", (_req: Request, res: Response) => {
 });
 
 app.get("/api/streams", (req: Request, res: Response) => {
-  let data = listStreams().map((stream) => ({
-    ...stream,
-    progress: calculateProgress(stream),
-  }));
 
-  const { status, asset, sender, recipient } = req.query;
-  if (status) {
-    data = data.filter((s) => s.progress.status === status);
-  }
-  if (asset) {
-    data = data.filter(
-      (s) => s.assetCode.toLowerCase() === (asset as string).toLowerCase(),
-    );
-  }
-  if (sender) {
-    data = data.filter(
-      (s) => s.sender.toLowerCase() === (sender as string).toLowerCase(),
-    );
-  }
-  if (recipient) {
-    data = data.filter(
-      (s) => s.recipient.toLowerCase() === (recipient as string).toLowerCase(),
-    );
-  }
-
-  res.json({ data });
 });
 
 app.get("/api/streams/export.csv", (req: Request, res: Response) => {
@@ -329,7 +301,7 @@ app.get("/api/open-issues", async (_req: Request, res: Response) => {
   }
 });
 
-async function startServer() {
+
   await initSoroban();
   await syncStreams();
   app.listen(port, () => {
@@ -337,4 +309,6 @@ async function startServer() {
   });
 }
 
-startServer().catch(console.error);
+if (require.main === module) {
+  startServer().catch(console.error);
+}
